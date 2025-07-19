@@ -1,0 +1,224 @@
+import pygame
+import sys
+
+# --- Game Constants (DOOMSDAY 94 Style) ---
+ORIGINAL_WIDTH, ORIGINAL_HEIGHT = 320, 200 # Classic low resolution
+SCALE_FACTOR = 3                            # Scale up for modern displays
+SCREEN_WIDTH, SCREEN_HEIGHT = ORIGINAL_WIDTH * SCALE_FACTOR, ORIGINAL_HEIGHT * SCALE_FACTOR
+
+TILE_SIZE = 16 # Pixels per tile in original resolution (e.g., 16x16 pixel tiles)
+SCALED_TILE_SIZE = TILE_SIZE * SCALE_FACTOR
+
+GRAVITY = 0.5
+PLAYER_SPEED = 3
+JUMP_POWER = -9
+
+# Colors (limited palette)
+BLACK = (0, 0, 0)
+WHITE = (200, 200, 200)
+DARK_GRAY = (80, 80, 80)
+RED = (150, 0, 0)
+BROWN = (100, 50, 0)
+GREEN = (0, 100, 0) # For player for visibility
+
+# --- Pygame Initialization ---
+pygame.init()
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("DOOMSDAY 94 (Simulated)")
+clock = pygame.time.Clock()
+
+# --- Helper Function for Pixel Art Scaling ---
+def scale_image(image):
+    return pygame.transform.scale(image, (image.get_width() * SCALE_FACTOR, image.get_height() * SCALE_FACTOR))
+
+# --- Game Classes ---
+
+class Player(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        # Simulate a simple player sprite
+        self.original_image = pygame.Surface((TILE_SIZE - 2, TILE_SIZE * 2 - 2)) # Tall, thin character
+        self.original_image.fill(GREEN) # Visible player color
+        self.image = scale_image(self.original_image)
+        self.rect = self.image.get_rect(topleft=(x * SCALED_TILE_SIZE, y * SCALED_TILE_SIZE)) # Start position in scaled coordinates
+
+        self.vel_x = 0
+        self.vel_y = 0
+        self.on_ground = False
+
+    def update(self, platforms):
+        # Apply gravity
+        self.vel_y += GRAVITY
+        if self.vel_y > 10: # Cap falling speed
+            self.vel_y = 10
+
+        # Horizontal movement
+        self.rect.x += self.vel_x * SCALE_FACTOR # Move by scaled speed
+
+        # Handle horizontal collisions with platforms
+        for platform in platforms:
+            if self.rect.colliderect(platform.rect):
+                if self.vel_x > 0: # Moving right
+                    self.rect.right = platform.rect.left
+                elif self.vel_x < 0: # Moving left
+                    self.rect.left = platform.rect.right
+
+        # Vertical movement
+        self.rect.y += self.vel_y * SCALE_FACTOR
+
+        # Handle vertical collisions with platforms
+        self.on_ground = False
+        for platform in platforms:
+            if self.rect.colliderect(platform.rect):
+                if self.vel_y > 0: # Falling down
+                    self.rect.bottom = platform.rect.top
+                    self.vel_y = 0
+                    self.on_ground = True
+                elif self.vel_y < 0: # Jumping up
+                    self.rect.top = platform.rect.bottom
+                    self.vel_y = 0
+
+        # Keep player within screen bounds (simplified)
+        if self.rect.left < 0:
+            self.rect.left = 0
+        if self.rect.right > SCREEN_WIDTH:
+            self.rect.right = SCREEN_WIDTH
+
+
+    def jump(self):
+        if self.on_ground:
+            self.vel_y = JUMP_POWER
+
+    def move_left(self):
+        self.vel_x = -PLAYER_SPEED
+
+    def move_right(self):
+        self.vel_x = PLAYER_SPEED
+
+    def stop_move(self):
+        self.vel_x = 0
+
+class Platform(pygame.sprite.Sprite):
+    def __init__(self, x, y, width, height):
+        super().__init__()
+        self.original_image = pygame.Surface((width * TILE_SIZE, height * TILE_SIZE))
+        self.original_image.fill(DARK_GRAY) # Platform color
+        self.image = scale_image(self.original_image)
+        self.rect = self.image.get_rect(topleft=(x * SCALED_TILE_SIZE, y * SCALED_TILE_SIZE))
+
+class Enemy(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.original_image = pygame.Surface((TILE_SIZE - 4, TILE_SIZE - 4)) # Smaller than player, like an Imp
+        self.original_image.fill(RED) # Demon-like color
+        self.image = scale_image(self.original_image)
+        self.rect = self.image.get_rect(topleft=(x * SCALED_TILE_SIZE, y * SCALED_TILE_SIZE))
+        self.speed = 1
+        self.direction = 1 # 1 for right, -1 for left
+        self.walk_limit_left = self.rect.x - (SCALED_TILE_SIZE * 3) # Patrol 3 tiles left
+        self.walk_limit_right = self.rect.x + (SCALED_TILE_SIZE * 3) # Patrol 3 tiles right
+
+    def update(self):
+        self.rect.x += self.speed * self.direction * SCALE_FACTOR
+
+        if self.direction == 1 and self.rect.right >= self.walk_limit_right:
+            self.direction = -1
+        elif self.direction == -1 and self.rect.left <= self.walk_limit_left:
+            self.direction = 1
+
+# --- Level Data (Simple DOOMSDAY 94 Layout) ---
+# Each character represents a tile type:
+# '.' = Air/Empty
+# '#' = Platform
+# 'P' = Player Start
+# 'E' = Enemy Start
+
+LEVEL_LAYOUT = [
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    "..................................",
+    ".............E....................",
+    "###########...........###########.",
+    ".....................P............",
+    "##################################"
+]
+
+all_sprites = pygame.sprite.Group()
+platforms = pygame.sprite.Group()
+enemies = pygame.sprite.Group()
+
+player = None
+
+# Create game objects from level data
+for y, row in enumerate(LEVEL_LAYOUT):
+    for x, char in enumerate(row):
+        if char == '#':
+            platform = Platform(x, y, 1, 1) # Each '#' is a 1x1 tile platform
+            all_sprites.add(platform)
+            platforms.add(platform)
+        elif char == 'P':
+            player = Player(x, y)
+            all_sprites.add(player)
+        elif char == 'E':
+            enemy = Enemy(x, y)
+            all_sprites.add(enemy)
+            enemies.add(enemy)
+
+if player is None: # Fallback if no player start in map
+    player = Player(5, 5)
+    all_sprites.add(player)
+
+# --- Game Loop ---
+running = True
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_LEFT:
+                player.move_left()
+            if event.key == pygame.K_RIGHT:
+                player.move_right()
+            if event.key == pygame.K_SPACE or event.key == pygame.K_UP:
+                player.jump()
+        if event.type == pygame.KEYUP:
+            if event.key == pygame.K_LEFT and player.vel_x < 0:
+                player.stop_move()
+            if event.key == pygame.K_RIGHT and player.vel_x > 0:
+                player.stop_move()
+
+    # Update
+    all_sprites.update(platforms) # Pass platforms to player update for collision
+
+    # Draw / Render
+    screen.fill(BLACK) # Background
+
+    # Simulate parallax (simplified: just dark gray background)
+    # For more advanced parallax, you'd draw multiple background layers here
+    # Example: pygame.draw.rect(screen, DARK_GRAY, (0, SCREEN_HEIGHT - SCALED_TILE_SIZE * 5, SCREEN_WIDTH, SCALED_TILE_SIZE * 5))
+
+    all_sprites.draw(screen) # Draw all sprites
+
+    # Display text (optional for old-school feel)
+    font = pygame.font.Font(None, 24 * SCALE_FACTOR) # Scaled font size
+    text = font.render(f"DOOMSDAY 94 - FPS: {int(clock.get_fps())}", True, WHITE)
+    screen.blit(text, (10 * SCALE_FACTOR, 10 * SCALE_FACTOR)) # Scaled position
+
+    pygame.display.flip() # Update the full display surface
+
+    # Cap frame rate
+    clock.tick(60) # 60 FPS
+
+pygame.quit()
+sys.exit()
